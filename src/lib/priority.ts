@@ -74,8 +74,8 @@ export function computePriority(convo: Conversation, now = new Date()): {
   score = clamp(Math.round(score), 0, 100);
 
   let label: PriorityLabel = "Low";
-  if (score >= 75) label = "High";
-  else if (score >= 45) label = "Medium";
+  if (score >= 84) label = "High";
+  else if (score >= 48) label = "Medium";
 
   const finalReasons = reasons
     .filter((r, idx) => reasons.indexOf(r) === idx)
@@ -106,4 +106,3 @@ export function analyzeInbox(conversations: Conversation[], now = new Date()) {
   updated.sort((a, b) => b.priorityScore - a.priorityScore);
   return updated;
 }
-

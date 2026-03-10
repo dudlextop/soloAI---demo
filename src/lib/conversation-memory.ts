@@ -1,7 +1,7 @@
 import type { Contact, ContactMemory, Conversation } from "@/lib/types";
 import { detectIntent, detectStage, detectStatus, suggestNextStep } from "@/lib/conversation-intel";
 
-function collectRecentMessages(conversations: Conversation[], contact: Contact) {
+function collectRecentMessages(conversations: Conversation[]) {
   const all: { convo: Conversation; index: number }[] = [];
   conversations.forEach((c) => {
     c.messages.forEach((_, idx) => {
@@ -74,7 +74,7 @@ export function generateContactMemory(
   if (contact.timezone) keyFacts.push(`Timezone: ${contact.timezone}`);
   keyFacts.push(`Trust level: ${contact.trustLevel}`);
 
-  const recent = collectRecentMessages(related, contact);
+  const recent = collectRecentMessages(related);
   let lastAgreement = "";
   const openLoops: string[] = [];
 
@@ -135,4 +135,3 @@ export function generateContactMemory(
     nextSuggestedStep,
   };
 }
-

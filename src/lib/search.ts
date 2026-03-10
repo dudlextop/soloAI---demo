@@ -1,97 +1,263 @@
-import type { Conversation, Message } from "@/lib/types";
+import type { Conversation, Source } from "@/lib/types";
 
-export type SearchResultConversation = {
-  type: "conversation";
+const SOURCE_LABEL: Record<Source, string> = {
+  gmail: "Gmail",
+  slack: "Slack",
+  whatsapp: "WhatsApp",
+  linkedin: "LinkedIn",
+  telegram: "Telegram",
+};
+
+export type SearchMatchField =
+  | "title"
+  | "snippet"
+  | "participant"
+  | "sender"
+  | "role"
+  | "body"
+  | "source"
+  | "relationship";
+
+export type SearchHit = {
   conversationId: string;
-  title: string;
-  snippet: string;
   source: Conversation["source"];
+  title: string;
+  participant: string;
+  excerpt: string;
+  matchedField: SearchMatchField;
+  highlightRanges: [number, number][];
+  score: number;
   lastMessageAt: string;
-  matches: { field: "title" | "snippet"; indices: [number, number][] };
+  priorityLabel: Conversation["priorityLabel"];
 };
 
-export type SearchResultMessage = {
-  type: "message";
-  conversationId: string;
-  source: Conversation["source"];
-  title: string;
-  message: Pick<Message, "senderName" | "senderRole" | "body" | "timestamp">;
-  matches: { field: "body"; indices: [number, number][] };
+export type SearchResults = SearchHit[];
+
+type SearchCandidate = {
+  matchedField: SearchMatchField;
+  text: string;
+  excerpt: string;
+  score: number;
+  ranges: [number, number][];
 };
 
-export type SearchResults = {
-  conversations: SearchResultConversation[];
-  messages: SearchResultMessage[];
-};
-
-function norm(s: string) {
-  return s.toLowerCase();
+function normalize(value: string) {
+  return value.toLowerCase().trim();
 }
 
-function findAllIndices(haystack: string, needle: string): [number, number][] {
-  if (!needle) return [];
-  const h = norm(haystack);
-  const n = norm(needle);
-  const out: [number, number][] = [];
-  let i = 0;
-  while (i < h.length) {
-    const idx = h.indexOf(n, i);
-    if (idx === -1) break;
-    out.push([idx, idx + n.length]);
-    i = idx + n.length;
+function tokenize(query: string) {
+  return normalize(query)
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function findTokenRanges(text: string, tokens: string[]) {
+  const haystack = normalize(text);
+  const ranges: [number, number][] = [];
+
+  for (const token of tokens) {
+    let cursor = 0;
+    while (cursor < haystack.length) {
+      const index = haystack.indexOf(token, cursor);
+      if (index === -1) break;
+      ranges.push([index, index + token.length]);
+      cursor = index + token.length;
+    }
   }
-  return out;
+
+  return mergeRanges(ranges);
+}
+
+function mergeRanges(ranges: [number, number][]) {
+  if (!ranges.length) return [];
+
+  return [...ranges]
+    .sort((a, b) => a[0] - b[0])
+    .reduce<[number, number][]>((acc, current) => {
+      const previous = acc[acc.length - 1];
+      if (!previous || current[0] > previous[1]) {
+        acc.push([...current]);
+        return acc;
+      }
+
+      previous[1] = Math.max(previous[1], current[1]);
+      return acc;
+    }, []);
+}
+
+function allTokensMatch(text: string, tokens: string[]) {
+  const haystack = normalize(text);
+  return tokens.every((token) => haystack.includes(token));
+}
+
+function compactExcerpt(text: string, ranges: [number, number][]) {
+  if (!text.trim()) return "";
+  if (!ranges.length || text.length <= 120) return text;
+
+  const [start, end] = ranges[0];
+  const sliceStart = Math.max(0, start - 36);
+  const sliceEnd = Math.min(text.length, Math.max(end + 64, 110));
+  const excerpt = text.slice(sliceStart, sliceEnd).trim();
+
+  return `${sliceStart > 0 ? "..." : ""}${excerpt}${sliceEnd < text.length ? "..." : ""}`;
+}
+
+function scoreField(
+  text: string,
+  tokens: string[],
+  baseScore: number,
+  prefixBonus = 0,
+  exactBonus = 0,
+) {
+  if (!text.trim()) return { score: 0, ranges: [] as [number, number][] };
+
+  const ranges = findTokenRanges(text, tokens);
+  if (!ranges.length) return { score: 0, ranges: [] as [number, number][] };
+
+  const normalized = normalize(text);
+  let score = baseScore + ranges.length * 4;
+
+  if (tokens.some((token) => normalized.startsWith(token))) {
+    score += prefixBonus;
+  }
+
+  if (tokens.length === 1 && normalized === tokens[0]) {
+    score += exactBonus;
+  }
+
+  return { score, ranges };
+}
+
+function primaryParticipant(conversation: Conversation) {
+  return (
+    conversation.participants.find((participant) => participant !== "You") ??
+    conversation.participants[0] ??
+    "Contact"
+  );
+}
+
+function searchBlob(conversation: Conversation) {
+  const messageText = conversation.messages
+    .map((message) => [message.senderName, message.senderRole ?? "", message.body].join(" "))
+    .join(" ");
+
+  return [
+    conversation.title,
+    conversation.snippet,
+    conversation.participants.join(" "),
+    conversation.relationshipTag,
+    SOURCE_LABEL[conversation.source],
+    messageText,
+  ].join(" ");
 }
 
 export function searchAll(conversations: Conversation[], query: string): SearchResults {
-  const q = query.trim();
-  if (!q) return { conversations: [], messages: [] };
+  const tokens = tokenize(query);
+  if (!tokens.length) return [];
 
-  const conversationsOut: SearchResultConversation[] = [];
-  const messagesOut: SearchResultMessage[] = [];
+  const hits: SearchHit[] = [];
 
-  for (const c of conversations) {
-    const titleMatches = findAllIndices(c.title, q);
-    const snippetMatches = findAllIndices(c.snippet, q);
-    if (titleMatches.length || snippetMatches.length) {
-      conversationsOut.push({
-        type: "conversation",
-        conversationId: c.id,
-        title: c.title,
-        snippet: c.snippet,
-        source: c.source,
-        lastMessageAt: c.lastMessageAt,
-        matches: {
-          field: titleMatches.length ? "title" : "snippet",
-          indices: titleMatches.length ? titleMatches : snippetMatches,
-        },
-      });
+  for (const conversation of conversations) {
+    if (!allTokensMatch(searchBlob(conversation), tokens)) {
+      continue;
     }
 
-    for (const m of c.messages) {
-      const bodyMatches = findAllIndices(m.body, q);
-      if (bodyMatches.length) {
-        messagesOut.push({
-          type: "message",
-          conversationId: c.id,
-          source: c.source,
-          title: c.title,
-          message: {
-            senderName: m.senderName,
-            senderRole: m.senderRole,
-            body: m.body,
-            timestamp: m.timestamp,
-          },
-          matches: { field: "body", indices: bodyMatches },
+    const participant = primaryParticipant(conversation);
+    const sourceLabel = SOURCE_LABEL[conversation.source];
+
+    const candidates: SearchCandidate[] = [
+      {
+        matchedField: "title" as const,
+        text: conversation.title,
+        excerpt: conversation.title,
+        ...scoreField(conversation.title, tokens, 120, 18, 28),
+      },
+      {
+        matchedField: "participant" as const,
+        text: conversation.participants.join(" "),
+        excerpt: participant,
+        ...scoreField(conversation.participants.join(" "), tokens, 112, 14, 22),
+      },
+      {
+        matchedField: "snippet" as const,
+        text: conversation.snippet,
+        excerpt: compactExcerpt(conversation.snippet, findTokenRanges(conversation.snippet, tokens)),
+        ...scoreField(conversation.snippet, tokens, 90, 10, 0),
+      },
+      {
+        matchedField: "source" as const,
+        text: sourceLabel,
+        excerpt: `Source: ${sourceLabel}`,
+        ...scoreField(sourceLabel, tokens, 72, 10, 18),
+      },
+      {
+        matchedField: "relationship" as const,
+        text: conversation.relationshipTag,
+        excerpt: `Context: ${conversation.relationshipTag}`,
+        ...scoreField(conversation.relationshipTag, tokens, 66, 6, 12),
+      },
+    ];
+
+    for (const message of conversation.messages) {
+      const senderCandidate = scoreField(message.senderName, tokens, 106, 14, 18);
+      if (senderCandidate.score) {
+        candidates.push({
+          matchedField: "sender" as const,
+          text: message.senderName,
+          excerpt: `Sender: ${message.senderName}`,
+          ...senderCandidate,
+        });
+      }
+
+      const roleCandidate = scoreField(message.senderRole ?? "", tokens, 84, 8, 12);
+      if (roleCandidate.score && message.senderRole) {
+        candidates.push({
+          matchedField: "role" as const,
+          text: message.senderRole,
+          excerpt: `${message.senderName} · ${message.senderRole}`,
+          ...roleCandidate,
+        });
+      }
+
+      const bodyCandidate = scoreField(message.body, tokens, 78, 6, 0);
+      if (bodyCandidate.score) {
+        candidates.push({
+          matchedField: "body" as const,
+          text: message.body,
+          excerpt: `${message.senderName}: ${compactExcerpt(message.body, bodyCandidate.ranges)}`,
+          ...bodyCandidate,
         });
       }
     }
+
+    const bestCandidate = candidates
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) => right.score - left.score)[0];
+
+    if (!bestCandidate) continue;
+
+    hits.push({
+      conversationId: conversation.id,
+      source: conversation.source,
+      title: conversation.title,
+      participant,
+      excerpt: bestCandidate.excerpt,
+      matchedField: bestCandidate.matchedField,
+      highlightRanges: findTokenRanges(bestCandidate.excerpt, tokens),
+      score:
+        bestCandidate.score +
+        (conversation.priorityLabel === "High" ? 10 : conversation.priorityLabel === "Medium" ? 4 : 0),
+      lastMessageAt: conversation.lastMessageAt,
+      priorityLabel: conversation.priorityLabel,
+    });
   }
 
-  conversationsOut.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
-  messagesOut.sort((a, b) => b.message.timestamp.localeCompare(a.message.timestamp));
-
-  return { conversations: conversationsOut.slice(0, 30), messages: messagesOut.slice(0, 50) };
+  return hits
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return right.lastMessageAt.localeCompare(left.lastMessageAt);
+    })
+    .slice(0, 60);
 }
 
 export function highlightText(
@@ -99,23 +265,22 @@ export function highlightText(
   ranges: [number, number][],
 ): Array<{ text: string; highlight: boolean }> {
   if (!ranges.length) return [{ text, highlight: false }];
-  const merged = [...ranges]
-    .sort((a, b) => a[0] - b[0])
-    .reduce<[number, number][]>((acc, r) => {
-      const last = acc[acc.length - 1];
-      if (!last || r[0] > last[1]) acc.push([...r]);
-      else last[1] = Math.max(last[1], r[1]);
-      return acc;
-    }, []);
 
   const parts: Array<{ text: string; highlight: boolean }> = [];
   let cursor = 0;
-  for (const [start, end] of merged) {
-    if (start > cursor) parts.push({ text: text.slice(cursor, start), highlight: false });
+
+  for (const [start, end] of mergeRanges(ranges)) {
+    if (start > cursor) {
+      parts.push({ text: text.slice(cursor, start), highlight: false });
+    }
+
     parts.push({ text: text.slice(start, end), highlight: true });
     cursor = end;
   }
-  if (cursor < text.length) parts.push({ text: text.slice(cursor), highlight: false });
+
+  if (cursor < text.length) {
+    parts.push({ text: text.slice(cursor), highlight: false });
+  }
+
   return parts;
 }
-

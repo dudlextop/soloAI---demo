@@ -1,4 +1,4 @@
-export type Source = "gmail" | "slack" | "whatsapp" | "linkedin";
+export type Source = "gmail" | "slack" | "whatsapp" | "linkedin" | "telegram";
 export type RelationshipTag =
   | "investor"
   | "client"
@@ -78,4 +78,3 @@ export type Conversation = {
   suggestedNextStep?: string;
   messages: Message[];
 };
-

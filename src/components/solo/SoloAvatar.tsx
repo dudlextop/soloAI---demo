@@ -35,14 +35,21 @@ export function SoloAvatar({
       : status === "busy"
       ? "bg-red-500"
       : status === "ai"
-      ? "bg-violet-500"
-      : "bg-zinc-500";
+      ? "bg-[var(--foreground)]"
+      : "bg-zinc-400";
 
   return (
-    <Avatar className={cn("h-9 w-9", className)}>
+    <Avatar
+      className={cn(
+        "h-9 w-9 rounded-[16px] border border-[var(--line)] bg-[var(--panel-subtle)] shadow-[var(--shadow-subtle)]",
+        className,
+      )}
+    >
       <AvatarImage src={src} alt={alt || name} />
-      <AvatarFallback>{initials}</AvatarFallback>
-      <AvatarBadge className={cn("border-2 border-background", badgeClassName)} />
+      <AvatarFallback className="bg-[var(--accent-soft)] text-[11px] font-semibold text-[var(--foreground)]">
+        {initials}
+      </AvatarFallback>
+      <AvatarBadge className={cn("border-2 border-[var(--panel-strong)]", badgeClassName)} />
     </Avatar>
   );
 }
@@ -57,4 +64,3 @@ export function SoloAvatarExamples() {
     </div>
   );
 }
-
