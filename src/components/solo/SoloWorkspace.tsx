@@ -374,63 +374,43 @@ function truncateMessage(body: string, max = 120) {
   return `${compact.slice(0, max - 1)}…`;
 }
 
-function ContextPopover({
+function ContextWindow({
   activeConversation,
   contactMemory,
-  open,
 }: {
   activeConversation: Conversation | null;
   contactMemory: ContactMemory | null;
-  open: boolean;
 }) {
-  const recentMessages = activeConversation?.messages.slice(-3).reverse() ?? [];
+  const recentMessages = activeConversation?.messages.slice(-2).reverse() ?? [];
+  const relationshipLine = contactMemory?.relationshipSummary
+    ? truncateMessage(contactMemory.relationshipSummary, 96)
+    : null;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: -6, scale: 0.98 }}
-      animate={{ opacity: open ? 1 : 0, y: open ? 0 : -6, scale: open ? 1 : 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -6, scale: 0.98 }}
       transition={{ duration: 0.16 }}
-      className="absolute right-0 top-[calc(100%+12px)] z-20 w-[min(360px,calc(100vw-72px))] rounded-[22px] border border-[var(--line)] bg-[var(--panel)] p-4 shadow-[0_24px_60px_rgba(15,23,42,0.18)]"
+      className="w-full max-w-[420px] rounded-[26px] border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[0_28px_80px_rgba(15,23,42,0.2)]"
     >
       <div className="space-y-4 text-sm leading-6">
         <div>
-          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-3)]">
-            Quick summary
-          </div>
-          <div className="mt-2 text-[var(--foreground)]">
+          <div className="text-[16px] font-semibold text-[var(--foreground)]">Context</div>
+          <div className="mt-2 text-[15px] leading-7 text-[var(--foreground)]">
             {activeConversation?.suggestedNextStep ?? "Review the latest messages and respond."}
           </div>
         </div>
 
-        {contactMemory ? (
-          <>
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-3)]">
-                Relationship
-              </div>
-              <div className="mt-2 text-[var(--foreground)]">
-                {contactMemory.relationshipSummary}
-              </div>
-            </div>
-            {contactMemory.openLoops.length ? (
-              <div>
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-3)]">
-                  Open loops
-                </div>
-                <ul className="mt-2 space-y-1 text-[var(--text-2)]">
-                  {contactMemory.openLoops.slice(0, 3).map((loop) => (
-                    <li key={loop}>{loop}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </>
+        {relationshipLine ? (
+          <div className="rounded-[18px] border border-[var(--line)] bg-[var(--panel-subtle)] px-4 py-3 text-[14px] leading-6 text-[var(--text-2)]">
+            {relationshipLine}
+          </div>
         ) : null}
 
         <div>
           <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-3)]">
-            Recent messages
+            Latest
           </div>
           <div className="mt-2 space-y-2">
             {recentMessages.map((message, index) => (
@@ -442,26 +422,11 @@ function ContextPopover({
                   {message.senderName}
                 </div>
                 <div className="mt-1 text-[13px] leading-5 text-[var(--foreground)]">
-                  {truncateMessage(message.body, 110)}
+                  {truncateMessage(message.body, 100)}
                 </div>
               </div>
             ))}
           </div>
-        </div>
-
-        <div>
-          <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-3)]">
-            Why it matters
-          </div>
-          <ul className="mt-2 space-y-1 text-[var(--text-2)]">
-            {(activeConversation?.priorityReasons.length
-              ? activeConversation.priorityReasons
-              : ["No scoring reasons yet."])
-              .slice(0, 3)
-              .map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-          </ul>
         </div>
       </div>
     </motion.div>
@@ -492,9 +457,6 @@ export function ThreadSheet({
   composerFocusToken: number;
 }) {
   const [contextOpen, setContextOpen] = React.useState(false);
-  const contextButtonRef = React.useRef<HTMLButtonElement | null>(null);
-  const contextPanelRef = React.useRef<HTMLDivElement | null>(null);
-
   React.useEffect(() => {
     if (!open) {
       setContextOpen(false);
@@ -504,21 +466,6 @@ export function ThreadSheet({
   React.useEffect(() => {
     setContextOpen(false);
   }, [activeConversation?.id]);
-
-  React.useEffect(() => {
-    if (!contextOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (contextButtonRef.current?.contains(target)) return;
-      if (contextPanelRef.current?.contains(target)) return;
-      setContextOpen(false);
-    }
-
-    window.addEventListener("pointerdown", handlePointerDown);
-    return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [contextOpen]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -534,7 +481,7 @@ export function ThreadSheet({
           <DialogTitle>Thread</DialogTitle>
         </DialogHeader>
         {activeConversation ? (
-          <div className="flex h-full min-h-0 flex-col">
+          <div className="relative flex h-full min-h-0 flex-col">
             <div className="border-b border-[var(--line)] px-5 py-4">
               <div className="relative flex items-start gap-3">
                 <SoloAvatar
@@ -556,7 +503,6 @@ export function ThreadSheet({
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    ref={contextButtonRef}
                     type="button"
                     onClick={() => setContextOpen((current) => !current)}
                     className="inline-flex h-9 items-center rounded-full border border-[var(--line)] bg-[var(--panel-strong)] px-3 text-sm font-medium text-[var(--text-2)] transition-colors hover:border-[color:var(--brand-line)] hover:bg-[color:var(--brand-soft)] hover:text-[color:var(--brand)]"
@@ -573,17 +519,6 @@ export function ThreadSheet({
                   </button>
                 </div>
 
-                <AnimatePresence>
-                  {contextOpen ? (
-                    <div ref={contextPanelRef}>
-                      <ContextPopover
-                        activeConversation={activeConversation}
-                        contactMemory={contactMemory}
-                        open={contextOpen}
-                      />
-                    </div>
-                  ) : null}
-                </AnimatePresence>
               </div>
             </div>
 
@@ -617,6 +552,25 @@ export function ThreadSheet({
               injectedToken={composerSeedToken}
               focusToken={composerFocusToken}
             />
+
+            <AnimatePresence>
+              {contextOpen ? (
+                <div className="absolute inset-0 z-30 flex items-start justify-center bg-[rgba(15,23,42,0.08)] px-4 py-20 backdrop-blur-[2px]">
+                  <button
+                    type="button"
+                    className="absolute inset-0 cursor-default"
+                    aria-label="Close context"
+                    onClick={() => setContextOpen(false)}
+                  />
+                  <div className="relative z-10 w-full max-w-[420px]">
+                    <ContextWindow
+                      activeConversation={activeConversation}
+                      contactMemory={contactMemory}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </AnimatePresence>
           </div>
         ) : null}
       </DialogContent>
